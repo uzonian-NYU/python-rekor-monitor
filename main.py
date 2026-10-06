@@ -1,33 +1,117 @@
 import argparse
+import base64
+import json
+import os
+
+import requests
+
 from util import extract_public_key, verify_artifact_signature
-from merkle_proof import DefaultHasher, verify_consistency, verify_inclusion, compute_leaf_hash
+from merkle_proof import (
+    DefaultHasher,
+    compute_leaf_hash,
+    verify_consistency,
+    verify_inclusion,
+)
+
+REKOR = "https://rekor.sigstore.dev/api/v1"
+
 
 def get_log_entry(log_index, debug=False):
-    # TODO: verify that log index value is sane
-    pass
+    if not isinstance(log_index, int) or log_index < 0:
+        raise ValueError("log index must be a non-negative integer")
+
+    response = requests.get(
+        f"{REKOR}/log/entries",
+        params={"logIndex": log_index},
+        timeout=10,
+    )
+    response.raise_for_status()
+
+    entry = next(iter(response.json().values()))
+
+    if debug:
+        print(json.dumps(entry, indent=2))
+
+    return entry
 
 def get_verification_proof(log_index, debug=False):
-    # TODO: verify that log index value is sane
-    pass
+    return get_log_entry(log_index, debug)["verification"]["inclusionProof"]
 
 def inclusion(log_index, artifact_filepath, debug=False):
-    # TODO::
-    # verify that log index and artifact filepath values are sane
-    # extract_public_key(certificate)
-    # verify_artifact_signature(signature, public_key, artifact_filepath)
-    # get_verification_proof(log_index)
-    # verify_inclusion(DefaultHasher, index, tree_size, leaf_hash, hashes, root_hash)
-    pass
+    if not artifact_filepath or not os.path.isfile(artifact_filepath):
+        raise ValueError("artifact file not found")
+
+    entry = get_log_entry(log_index, debug)
+
+    body = json.loads(base64.b64decode(entry["body"]))
+    signature = base64.b64decode(body["spec"]["signature"]["content"])
+    cert_pem = base64.b64decode(
+        body["spec"]["signature"]["publicKey"]["content"]
+    )
+
+    public_key = extract_public_key(cert_pem)
+    verify_artifact_signature(signature, public_key, artifact_filepath)
+
+    proof = entry["verification"]["inclusionProof"]
+    leaf_hash = compute_leaf_hash(entry["body"])
+
+    verify_inclusion(
+        DefaultHasher,
+        proof["logIndex"],
+        proof["treeSize"],
+        leaf_hash,
+        proof["hashes"],
+        proof["rootHash"],
+        debug,
+    )
+
+    print("Offline root hash calculation for inclusion verified.")
 
 def get_latest_checkpoint(debug=False):
-    # TODO: Fetch the latest checkpoint from rekor
-    pass
+    response = requests.get(f"{REKOR}/log", timeout=10)
+    response.raise_for_status()
+
+    checkpoint = response.json()
+    checkpoint.pop("inactiveShards", None)
+
+    if debug:
+        with open("checkpoint.json", "w") as checkpoint_file:
+            json.dump(checkpoint, checkpoint_file, indent=4)
+
+    return checkpoint
 
 def consistency(prev_checkpoint, debug=False):
-    # TODO: 
-    # verify that prev checkpoint is not empty
-    # get_latest_checkpoint()
-    pass
+    if not prev_checkpoint or not all(prev_checkpoint.values()):
+        raise ValueError("previous checkpoint is empty")
+
+    latest = get_latest_checkpoint(debug)
+
+    if str(prev_checkpoint["treeID"]) != str(latest["treeID"]):
+        raise ValueError("old checkpoint is from a different tree (shard)")
+
+    response = requests.get(
+        f"{REKOR}/log/proof",
+        params={
+            "firstSize": prev_checkpoint["treeSize"],
+            "lastSize": latest["treeSize"],
+            "treeID": prev_checkpoint["treeID"],
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+
+    proof = response.json()
+
+    verify_consistency(
+        DefaultHasher,
+        prev_checkpoint["treeSize"],
+        latest["treeSize"],
+        proof["hashes"],
+        prev_checkpoint["rootHash"],
+        latest["rootHash"],
+    )
+
+    print("Consistency verification successful.")
 
 def main():
     debug = False
