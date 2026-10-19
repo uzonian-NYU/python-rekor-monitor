@@ -5,13 +5,13 @@ import os
 
 import requests
 
-from util import extract_public_key, verify_artifact_signature
 from merkle_proof import (
     DefaultHasher,
     compute_leaf_hash,
     verify_consistency,
     verify_inclusion,
 )
+from util import extract_public_key, verify_artifact_signature
 
 REKOR = "https://rekor.sigstore.dev/api/v1"
 
