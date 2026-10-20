@@ -1,0 +1,48 @@
+[project]
+name = "python-rekor-monitor"
+version = "0.1.0"
+description = "Verify inclusion and consistency of entries in the Sigstore Rekor transparency log"
+authors = [{ name = "Uzoma Acholonu" }]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["requests (>=2.31)", "cryptography (>=42)"]
+
+[tool.poetry]
+package-mode = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = false
+
+[tool.bandit]
+exclude_dirs = [".venv", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=main --cov=util --cov=merkle_proof --cov-report=term-missing"
+
+[dependency-groups]
+dev = [
+    "ruff (>=0.17.1,<0.18.0)",
+    "mypy (>=2.4.0,<3.0.0)",
+    "bandit (>=1.9.4,<2.0.0)",
+    "types-requests (>=2.33.0.20261006,<3.0.0.0)",
+    "pytest (>=9.1.1,<10.0.0)",
+    "pytest-cov (>=7.1.0,<8.0.0)",
+    "pre-commit (==4.2.0)",
+    "radon (>=6.0.1,<7.0.0)"
+]

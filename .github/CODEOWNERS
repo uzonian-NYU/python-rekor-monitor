@@ -1,0 +1,15 @@
+# Default owner for every file
+*                       @uzonian-NYU
+
+# Verification code
+/main.py                @uzonian-NYU
+/util.py                @uzonian-NYU
+/merkle_proof.py        @uzonian-NYU
+
+# Tests and project configuration
+/tests/                 @uzonian-NYU
+/pyproject.toml         @uzonian-NYU
+/.pre-commit-config.yaml @uzonian-NYU
+
+# Security policy
+/SECURITY.md            @uzonian-NYU
