@@ -11,7 +11,7 @@ from merkle_proof import (
     verify_consistency,
     verify_inclusion,
 )
-from util import extract_public_key, verify_artifact_signature
+from util import load_public_key, verify_artifact_signature
 
 REKOR = "https://rekor.sigstore.dev/api/v1"
 
@@ -20,14 +20,23 @@ def get_log_entry(log_index, debug=False):
     if not isinstance(log_index, int) or log_index < 0:
         raise ValueError("log index must be a non-negative integer")
 
-    response = requests.get(
-        f"{REKOR}/log/entries",
-        params={"logIndex": log_index},
-        timeout=10,
-    )
-    response.raise_for_status()
+    try:
+        response = requests.get(
+            f"{REKOR}/log/entries",
+            params={"logIndex": log_index},
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"failed to fetch log entry {log_index}: {exc}"
+        ) from exc
 
-    entry = next(iter(response.json().values()))
+    entries = response.json()
+    if not entries:
+        raise ValueError(f"no log entry found for index {log_index}")
+
+    entry = next(iter(entries.values()))
 
     if debug:
         print(json.dumps(entry, indent=2))
@@ -44,12 +53,19 @@ def inclusion(log_index, artifact_filepath, debug=False):
     entry = get_log_entry(log_index, debug)
 
     body = json.loads(base64.b64decode(entry["body"]))
+
+    if body.get("kind") != "hashedrekord":
+        raise ValueError(
+            f"unsupported entry kind {body.get('kind')!r}; "
+            "only 'hashedrekord' entries are supported"
+        )
+
     signature = base64.b64decode(body["spec"]["signature"]["content"])
-    cert_pem = base64.b64decode(
+    public_key_bytes = base64.b64decode(
         body["spec"]["signature"]["publicKey"]["content"]
     )
 
-    public_key = extract_public_key(cert_pem)
+    public_key = load_public_key(public_key_bytes)
     verify_artifact_signature(signature, public_key, artifact_filepath)
 
     proof = entry["verification"]["inclusionProof"]
@@ -68,15 +84,14 @@ def inclusion(log_index, artifact_filepath, debug=False):
     print("Offline root hash calculation for inclusion verified.")
 
 def get_latest_checkpoint(debug=False):
-    response = requests.get(f"{REKOR}/log", timeout=10)
-    response.raise_for_status()
+    try:
+        response = requests.get(f"{REKOR}/log", timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise RuntimeError(f"failed to fetch latest checkpoint: {exc}") from exc
 
     checkpoint = response.json()
     checkpoint.pop("inactiveShards", None)
-
-    if debug:
-        with open("checkpoint.json", "w") as checkpoint_file:
-            json.dump(checkpoint, checkpoint_file, indent=4)
 
     return checkpoint
 
@@ -89,16 +104,19 @@ def consistency(prev_checkpoint, debug=False):
     if str(prev_checkpoint["treeID"]) != str(latest["treeID"]):
         raise ValueError("old checkpoint is from a different tree (shard)")
 
-    response = requests.get(
-        f"{REKOR}/log/proof",
-        params={
-            "firstSize": prev_checkpoint["treeSize"],
-            "lastSize": latest["treeSize"],
-            "treeID": prev_checkpoint["treeID"],
-        },
-        timeout=10,
-    )
-    response.raise_for_status()
+    try:
+        response = requests.get(
+            f"{REKOR}/log/proof",
+            params={
+                "firstSize": prev_checkpoint["treeSize"],
+                "lastSize": latest["treeSize"],
+                "treeID": prev_checkpoint["treeID"],
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise RuntimeError(f"failed to fetch consistency proof: {exc}") from exc
 
     proof = response.json()
 
@@ -148,6 +166,9 @@ def main():
         checkpoint = get_latest_checkpoint(debug)
         print(json.dumps(checkpoint, indent=4))
     if args.inclusion:
+        if not args.artifact:
+            print("please specify artifact filepath for inclusion verification")
+            return
         inclusion(args.inclusion, args.artifact, debug)
     if args.consistency:
         if not args.tree_id:
